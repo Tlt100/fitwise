@@ -228,9 +228,3 @@ npm run typecheck   # next typegen && tsc --noEmit
 - **Free-tier prompts may be used by Google** to improve its products. That is Google's
   policy, stated on the privacy page.
 - **Pages render dynamically** because the CSP issues a nonce per request.
-
----
-
-## Credit
-
-Forked from Flotrpy/Alignly.
