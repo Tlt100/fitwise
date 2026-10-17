@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only token: nothing in this workflow writes to the repo.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Reported, not enforced: an advisory in a transitive dependency should
+      # be visible in every run without blocking unrelated changes.
+      - name: npm audit (non-blocking)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      # Builds without GEMINI_API_KEY on purpose: the app must build and serve
+      # with the AI features reporting themselves as unconfigured.
+      - run: npm run build
