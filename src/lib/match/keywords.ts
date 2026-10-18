@@ -8,7 +8,7 @@
  * route handlers alike.
  */
 import { getLexicon, parseForm, type LexiconEntry, type TermCategory } from "./lexicon";
-import { normKey, STOPWORDS, tokenize, type Token } from "./stem";
+import { normalizeText, normKey, STOPWORDS, tokenize, type Token } from "./stem";
 
 export type { TermCategory } from "./lexicon";
 export type TermLocation = "skills" | "experience" | "summary" | "other";
@@ -29,6 +29,11 @@ export interface JdTerm {
   source: "lexicon" | "candidate";
   /** Lower-cased spellings the posting used, for "exact" comparisons. */
   jdForms: string[];
+  /**
+   * Terms the posting offers as interchangeable with this one ("ECS or
+   * Kubernetes", "Playwright/Cypress"). Showing any of them satisfies it.
+   */
+  alternatives?: string[];
   /** The strongest section the term appeared in. */
   section: JdSectionKind;
 }
@@ -46,6 +51,8 @@ export interface TermMatch {
   /** The resume's own spellings, so a variant can be shown as "you wrote k8s". */
   matchedForms: string[];
   source: "lexicon" | "candidate";
+  /** Set when the term itself is absent but a posting-given alternative is present. */
+  satisfiedBy?: string;
 }
 
 export interface CoverageSummary {
@@ -472,6 +479,27 @@ export interface ExtractOptions {
  * responsibilities, which outweigh nice-to-have / preferred / bonus sections;
  * benefits, "about us" and EEO boilerplate are ignored entirely.
  */
+/** Text between two hits that makes them alternatives: "or", "and/or", "/". */
+const ALTERNATIVE_GAP = /^\s*(?:,?\s*(?:or|and\s*\/\s*or)|\/)\s*$/i;
+
+/**
+ * Pairs of lexicon entries the posting joins with "or" or a slash on the same
+ * line. Comma lists are left alone: "Python, SQL or Go" is ambiguous, and
+ * reading it as "any one of three" would overstate coverage.
+ */
+function alternativePairs(text: string, tokens: Token[], hits: Hit[]): [number, number][] {
+  const sorted = [...hits].sort((a, b) => a.first - b.first);
+  const pairs: [number, number][] = [];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const a = sorted[i - 1];
+    const b = sorted[i];
+    if (a.line !== b.line || a.entry === b.entry) continue;
+    const gap = text.slice(tokens[a.first + a.length - 1].end, tokens[b.first].start);
+    if (ALTERNATIVE_GAP.test(gap)) pairs.push([a.entry, b.entry]);
+  }
+  return pairs;
+}
+
 export function extractJdTerms(jd: string, options: ExtractOptions = {}): JdTerm[] {
   const maxTerms = options.maxTerms ?? MAX_TERMS;
   const tokens = tokenize(jd);
@@ -531,6 +559,16 @@ export function extractJdTerms(jd: string, options: ExtractOptions = {}): JdTerm
     record(`lex:${hit.entry}`, entry.name, entry.category, "lexicon", kinds[hit.line], hit.norm);
   }
 
+  const alternativesOf = new Map<string, Set<string>>();
+  for (const [a, b] of alternativePairs(normalizeText(jd), tokens, hits)) {
+    const nameA = index.entries[a].name;
+    const nameB = index.entries[b].name;
+    if (!alternativesOf.has(nameA)) alternativesOf.set(nameA, new Set());
+    if (!alternativesOf.has(nameB)) alternativesOf.set(nameB, new Set());
+    alternativesOf.get(nameA)!.add(nameB);
+    alternativesOf.get(nameB)!.add(nameA);
+  }
+
   if (options.candidates !== false) {
     tokens.forEach((token, i) => {
       if (covered[i] || caps.has(token.line)) return;
@@ -560,6 +598,9 @@ export function extractJdTerms(jd: string, options: ExtractOptions = {}): JdTerm
       source: a.source,
       jdForms: [...a.jdForms],
       section: a.best,
+      ...(a.source === "lexicon" && alternativesOf.has(a.term)
+        ? { alternatives: [...alternativesOf.get(a.term)!] }
+        : {}),
     });
   }
 
@@ -653,6 +694,23 @@ export function matchTerms(resumeText: string, terms: JdTerm[], jdStructure: Mat
       count: f?.count ?? 0,
       matchedForms: f?.forms ?? [],
       source: t.source,
+    };
+  });
+
+  // A term the posting offered as one of several options counts as covered
+  // when the resume shows another of those options.
+  const byTerm = new Map(matches.map((m) => [m.term, m]));
+  terms.forEach((t, i) => {
+    const m = matches[i];
+    if (m.status !== "missing" || !t.alternatives) return;
+    const alt = t.alternatives.map((name) => byTerm.get(name)).find((x) => x && x.status !== "missing");
+    if (!alt) return;
+    matches[i] = {
+      ...m,
+      status: alt.status,
+      locations: alt.locations,
+      matchedForms: alt.matchedForms,
+      satisfiedBy: alt.term,
     };
   });
 

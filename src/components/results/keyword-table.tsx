@@ -151,7 +151,11 @@ export function KeywordTable({
                       <meta.Icon className="size-3.5" aria-hidden />
                       {meta.label}
                     </Badge>
-                    {t.status === "variant" && t.matchedForms.length ? (
+                    {t.satisfiedBy ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Covered by {t.satisfiedBy}: the posting accepts either
+                      </p>
+                    ) : t.status === "variant" && t.matchedForms.length ? (
                       <p className="mt-1 text-xs text-muted-foreground">
                         You wrote “{t.matchedForms.join("”, “")}”
                       </p>

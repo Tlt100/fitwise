@@ -325,3 +325,43 @@ describe("summarize", () => {
     expect(summarize([t(1, "variant")]).weightedCoveragePct).toBe(80);
   });
 });
+
+describe("alternatives in the posting", () => {
+  const jd = [
+    "Requirements",
+    "- Experience operating services on AWS (ECS or Kubernetes, RDS, S3)",
+    "- End-to-end testing with Playwright/Cypress",
+    "- Strong TypeScript and React",
+  ].join("\n");
+
+  it("links terms joined by 'or' or a slash", () => {
+    const terms = extractJdTerms(jd);
+    const k8s = terms.find((t) => t.term === "Kubernetes");
+    const playwright = terms.find((t) => t.term === "Playwright");
+    expect(k8s?.alternatives).toEqual(expect.arrayContaining([expect.stringMatching(/ECS/)]));
+    expect(playwright?.alternatives).toContain("Cypress");
+  });
+
+  it("does not link comma lists or plain neighbours", () => {
+    const terms = extractJdTerms(jd);
+    expect(terms.find((t) => t.term === "TypeScript")?.alternatives).toBeUndefined();
+    expect(terms.find((t) => t.term === "RDS" || /RDS/.test(t.term))?.alternatives ?? []).not.toContain("S3");
+  });
+
+  it("counts a term as covered when the resume shows an alternative", () => {
+    const resume = "Skills\nTypeScript, React, AWS ECS, Cypress";
+    const result = matchResumeToJob(resume, jd);
+    const k8s = result.terms.find((t) => t.term === "Kubernetes");
+    const playwright = result.terms.find((t) => t.term === "Playwright");
+    expect(k8s?.status).not.toBe("missing");
+    expect(k8s?.satisfiedBy).toMatch(/ECS/);
+    expect(playwright?.satisfiedBy).toBe("Cypress");
+    expect(result.coverage.requiredMissing).not.toContain("Kubernetes");
+  });
+
+  it("still reports both missing when the resume shows neither", () => {
+    const result = matchResumeToJob("Skills\nTypeScript, React", jd);
+    expect(result.terms.find((t) => t.term === "Playwright")?.status).toBe("missing");
+    expect(result.terms.find((t) => t.term === "Cypress")?.status).toBe("missing");
+  });
+});
